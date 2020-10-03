@@ -13,20 +13,20 @@ Here's a quick example:
 
 ```golang
 func main() {
-  connectionString := "host=localhost port=5432 ..."
+	connectionString := "host=localhost port=5432 ..."
 
-  // connect to postgres
+	// connect to postgres
 	listener, err := pgevents.OpenListener(connectionString)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-  // attach the listener to 1 or more table(s)
+	// attach the listener to 1 or more table(s)
 	if err := listener.Attach("my_table"); err != nil {
 		log.Fatal(err)
 	}
 
-  // attach 1 or more callback(s)
+	// attach 1 or more callback(s)
 	listener.OnEvent(func(event *pgevents.TableEvent) {
 		fmt.Printf("received event: %v\n", event)
 	})

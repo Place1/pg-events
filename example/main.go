@@ -3,13 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/postgres"
 	"github.com/pkg/errors"
 	"github.com/place1/pg-events/pkg/pgevents"
+	"github.com/sirupsen/logrus"
 )
 
 type ExampleTable struct {
@@ -32,20 +32,22 @@ func OpenGorm(connectionString string) (*gorm.DB, error) {
 }
 
 func main() {
+	logrus.SetLevel(logrus.DebugLevel)
+
 	connectionString := "host=localhost port=5432 sslmode=disable dbname=postgres user=postgres password=development"
 
 	db, err := OpenGorm(connectionString)
 	if err != nil {
-		log.Fatal(err)
+		logrus.Fatal(err)
 	}
 
 	listener, err := pgevents.OpenListener(connectionString)
 	if err != nil {
-		log.Fatal(err)
+		logrus.Fatal(err)
 	}
 
 	if err := listener.Attach("example_tables"); err != nil {
-		log.Fatal(err)
+		logrus.Fatal(err)
 	}
 
 	listener.OnEvent(func(event *pgevents.TableEvent) {
@@ -55,13 +57,20 @@ func main() {
 		}
 	})
 
+	listener.OnReconnect(func() {
+		fmt.Println("reconnected")
+	})
+
 	i := 0
 	for {
-		db.Save(&ExampleTable{
+		r := db.Save(&ExampleTable{
 			Name:      fmt.Sprintf("example-row-%d", i),
 			CreatedAt: time.Now(),
 			UpdatedAt: time.Now(),
 		})
+		if r.Error != nil {
+			logrus.Error(r.Error)
+		}
 		time.Sleep(5 * time.Second)
 		i++
 	}

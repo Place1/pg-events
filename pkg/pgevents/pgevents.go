@@ -3,18 +3,19 @@ package pgevents
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
 	"time"
 
 	"github.com/lib/pq"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 )
 
 type Listener struct {
-	stop      chan bool
-	db        *sql.DB
-	pql       *pq.Listener
-	callbacks []Callback
+	stop               chan bool
+	db                 *sql.DB
+	pql                *pq.Listener
+	eventCallbacks     []OnEvent
+	reconnectCallbacks []OnReconnect
 }
 
 type TableEvent struct {
@@ -23,7 +24,9 @@ type TableEvent struct {
 	Data   string
 }
 
-type Callback func(*TableEvent)
+type OnEvent func(*TableEvent)
+
+type OnReconnect func()
 
 func OpenListener(connectionString string) (*Listener, error) {
 	db, err := sql.Open("postgres", connectionString)
@@ -55,8 +58,12 @@ func (l *Listener) Attach(table string) error {
 	return nil
 }
 
-func (l *Listener) OnEvent(cb Callback) {
-	l.callbacks = append(l.callbacks, cb)
+func (l *Listener) OnEvent(cb OnEvent) {
+	l.eventCallbacks = append(l.eventCallbacks, cb)
+}
+
+func (l *Listener) OnReconnect(cb OnReconnect) {
+	l.reconnectCallbacks = append(l.reconnectCallbacks, cb)
 }
 
 func (l *Listener) start() error {
@@ -68,14 +75,27 @@ func (l *Listener) start() error {
 		for {
 			select {
 			case <-l.stop:
-				log.Println("finished listening for events")
+				logrus.Debug("finished listening for events")
 				return
-			case n := <-l.pql.Notify:
-				log.Printf("received data from channel: %s\n", n.Channel)
-				l.emit(n)
-			case <-time.After(time.Minute):
-				log.Println("no events received for 1 minute: checking connection")
-				go l.pql.Ping()
+			case notification := <-l.pql.NotificationChannel():
+				if notification != nil {
+					logrus.Debugf("received data from channel: %s\n", notification.Channel)
+					l.emitEvent(notification)
+				} else {
+					// a nil notification is documented to mean that
+					// the connection has been lost and then re-established
+					// i.e. a reconnect occurred and some notifications may
+					// have been missed.
+					logrus.Debug("received nil from channel indicating reconnect")
+					l.emitReconnect()
+				}
+			case <-time.After(1 * time.Minute):
+				logrus.Debug("no events received for 1 minute: checking connection")
+				go func() {
+					if err := l.pql.Ping(); err != nil {
+						logrus.Error(errors.Wrap(err, "pgevents ping returned an error"))
+					}
+				}()
 			}
 		}
 	}()
@@ -83,16 +103,22 @@ func (l *Listener) start() error {
 	return nil
 }
 
-func (l *Listener) emit(notification *pq.Notification) {
+func (l *Listener) emitEvent(notification *pq.Notification) {
 	event := &TableEvent{}
 
 	if err := json.Unmarshal([]byte(notification.Extra), event); err != nil {
-		log.Println(errors.Wrap(err, "failed to unmarshal table event"))
+		logrus.Error(errors.Wrap(err, "failed to unmarshal table event"))
 		return
 	}
 
-	for _, cb := range l.callbacks {
+	for _, cb := range l.eventCallbacks {
 		cb(event)
+	}
+}
+
+func (l *Listener) emitReconnect() {
+	for _, cb := range l.reconnectCallbacks {
+		cb()
 	}
 }
 

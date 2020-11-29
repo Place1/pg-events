@@ -79,7 +79,7 @@ func (l *Listener) start() error {
 				return
 			case notification := <-l.pql.NotificationChannel():
 				if notification != nil {
-					logrus.Debugf("received data from channel: %s\n", notification.Channel)
+					logrus.Debugf("received data from channel: %s", notification.Channel)
 					l.emitEvent(notification)
 				} else {
 					// a nil notification is documented to mean that
